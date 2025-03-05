@@ -1,17 +1,23 @@
-import pkg/chronos
-import pkg/chronos/unittest2/asynctests
-import pkg/quic
+import chronos
+import chronos/unittest2/asynctests
+import quic
+import quic/transport/tlsbackend
+import ../helpers/certificate
 
 suite "api":
   setup:
-    var listener = listen(initTAddress("127.0.0.1:0"))
+    let serverTLSConfig = TLSConfig.init(testCertificate(), testPrivateKey())
+    var server = QuicServer.init(serverTLSConfig)
+    let clientTLSConfig = TLSConfig.init()
+    var client = QuicClient.init(clientTLSConfig)
+    var listener = server.listen(initTAddress("127.0.0.1:0"))
     let address = listener.localAddress
 
   teardown:
     waitFor listener.stop()
 
   asyncTest "opens and drops connections":
-    let dialing = dial(address)
+    let dialing = client.dial(address)
     let accepting = listener.accept()
 
     let outgoing = await dialing
@@ -26,7 +32,7 @@ suite "api":
     await incoming.drop()
 
   asyncTest "opens and closes streams":
-    let dialing = dial(address)
+    let dialing = client.dial(address)
     let accepting = listener.accept()
 
     let outgoing = await dialing
@@ -42,7 +48,7 @@ suite "api":
     await incoming.drop()
 
   asyncTest "waits until peer closes connection":
-    let dialing = dial(address)
+    let dialing = client.dial(address)
     let accepting = listener.accept()
 
     let outgoing = await dialing
@@ -53,11 +59,11 @@ suite "api":
 
   asyncTest "accepts multiple incoming connections":
     let accepting1 = listener.accept()
-    let outgoing1 = await dial(address)
+    let outgoing1 = await client.dial(address)
     let incoming1 = await accepting1
 
     let accepting2 = listener.accept()
-    let outgoing2 = await dial(address)
+    let outgoing2 = await client.dial(address)
     let incoming2 = await accepting2
 
     check incoming1 != incoming2
@@ -70,7 +76,7 @@ suite "api":
   asyncTest "writes to and reads from streams":
     let message = @[1'u8, 2'u8, 3'u8]
 
-    let outgoing = await dial(address)
+    let outgoing = await client.dial(address)
     defer:
       await outgoing.drop()
 

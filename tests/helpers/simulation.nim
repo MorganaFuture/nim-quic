@@ -1,8 +1,8 @@
 import std/random
 import pkg/chronos
-import pkg/quic/transport/quicconnection
-import pkg/quic/transport/quicclientserver
+import pkg/quic/transport/[quicconnection, quicclientserver, tlsbackend]
 import pkg/quic/helpers/asyncloop
+import ./certificate
 import ./addresses
 
 proc networkLoop*(source, destination: QuicConnection) {.async.} =
@@ -37,11 +37,17 @@ proc simulateLossyNetwork*(a, b: QuicConnection) {.async.} =
     await allFutures(loop1.cancelAndWait(), loop2.cancelAndWait())
 
 proc setupConnection*(): Future[tuple[client, server: QuicConnection]] {.async.} =
-  let client = newQuicClientConnection(zeroAddress, zeroAddress)
-  client.send()
+  let clientTLSBackend = newClientTLSBackend(@[], @[], Opt.none(CertificateVerifier))
+  let client = newQuicClientConnection(clientTLSBackend, zeroAddress, zeroAddress)
+
+  client.send() # Start Handshake
   let datagram = await client.outgoing.get()
-  let server = newQuicServerConnection(zeroAddress, zeroAddress, datagram)
-  server.receive(datagram)
+  let serverTLSBackend = newServerTLSBackend(
+    testCertificate(), testPrivateKey(), Opt.none(CertificateVerifier)
+  )
+  let server =
+    newQuicServerConnection(serverTLSBackend, zeroAddress, zeroAddress, datagram)
+
   result = (client, server)
 
 proc performHandshake*(): Future[tuple[client, server: QuicConnection]] {.async.} =
