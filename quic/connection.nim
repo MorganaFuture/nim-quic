@@ -23,6 +23,8 @@ type
     onClose: Opt[proc() {.gcsafe, raises: [].}]
     closed: AsyncEvent
 
+  TimeOutError* = object of QuicError
+
   IncomingConnection = ref object of Connection
 
   OutgoingConnection = ref object of Connection
@@ -152,6 +154,34 @@ proc newOutgoingConnection*(
 proc startHandshake*(connection: Connection) {.gcsafe.} =
   connection.quic.send()
 
+proc waitForHandshake*(
+    connection: Connection
+) {.async: (raises: [CancelledError, TimeOutError, CatchableError]).} =
+  let key = connection.quic.error.register()
+  defer:
+    connection.quic.error.unregister(key)
+
+  let errFut = connection.quic.error.waitEvents(key)
+  let timeoutFut = connection.quic.timeout.wait()
+  let handshakeFut = connection.quic.handshake.wait()
+  let raceFut = await race(handshakeFut, timeoutFut, errFut)
+  if raceFut == timeoutFut:
+    let connCloseFut = connection.close()
+    errFut.cancelSoon()
+    handshakeFut.cancelSoon()
+    await connCloseFut
+    raise newException(TimeOutError, "handshake timed out")
+  elif raceFut == errFut:
+    let connCloseFut = connection.close()
+    timeoutFut.cancelSoon()
+    handshakeFut.cancelSoon()
+    await connCloseFut
+    let err = await errFut
+    raise newException(QuicError, "connection error: " & err[0])
+  else:
+    errFut.cancelSoon()
+    timeoutFut.cancelSoon()
+
 proc receive*(connection: Connection, datagram: Datagram) =
   connection.quic.receive(datagram)
 
@@ -168,7 +198,6 @@ proc localAddress*(
 proc openStream*(
     connection: Connection, unidirectional = false
 ): Future[Stream] {.async.} =
-  await connection.quic.handshake.wait()
   result = await connection.quic.openStream(unidirectional = unidirectional)
 
 proc incomingStream*(connection: Connection): Future[Stream] {.async.} =

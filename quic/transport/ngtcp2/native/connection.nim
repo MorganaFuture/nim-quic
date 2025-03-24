@@ -30,7 +30,7 @@ type
     flowing*: AsyncEvent
     timeout*: Timeout
     onSend*: proc(datagram: Datagram) {.gcsafe, raises: [].}
-    onTimeout*: proc() {.raises: [].}
+    onTimeout*: proc() {.gcsafe, raises: [].}
     onIncomingStream*: proc(stream: Stream)
     onHandshakeDone*: proc()
     onNewId*: Opt[proc(id: ConnectionId)]
@@ -64,8 +64,6 @@ proc destroy*(connection: Ngtcp2Connection) =
 
 proc handleTimeout(connection: Ngtcp2Connection) {.gcsafe, raises: [].}
 
-proc executeOnTimeout(connection: Ngtcp2Connection) {.async.}
-
 proc newConnection*(path: Path, rng: ref HmacDrbgContext): Ngtcp2Connection =
   let connection = Ngtcp2Connection()
   connection.rng = rng
@@ -76,8 +74,6 @@ proc newConnection*(path: Path, rng: ref HmacDrbgContext): Ngtcp2Connection =
       connection.handleTimeout()
   )
   connection.flowing.fire()
-
-  asyncSpawn connection.executeOnTimeout()
 
   connection
 
@@ -197,9 +193,12 @@ proc handleTimeout(connection: Ngtcp2Connection) =
 
   errorAsDefect:
     let ret = ngtcp2_conn_handle_expiry(conn, now())
-    trace "handleExpiry", ret
-    checkResult ret
-    connection.send()
+    trace "handleExpiry", code=ret
+    if ret == NGTCP2_ERR_IDLE_CLOSE:
+      connection.onTimeout()
+    else:
+      checkResult ret
+      connection.send()
 
 proc close*(connection: Ngtcp2Connection): Datagram =
   let conn = connection.conn.valueOr:
@@ -230,12 +229,6 @@ proc close*(connection: Ngtcp2Connection): Datagram =
   Datagram(data: data, ecn: ecn)
 
   # TODO: should stop all event loops
-
-proc executeOnTimeout(connection: Ngtcp2Connection) {.async.} =
-  trace "Waiting expiration"
-  await connection.timeout.expired()
-  trace "Timeout expired"
-  #TODO should we call connection.onTimeout()
 
 proc closingDuration*(connection: Ngtcp2Connection): Duration =
   let conn = connection.conn.valueOr:
