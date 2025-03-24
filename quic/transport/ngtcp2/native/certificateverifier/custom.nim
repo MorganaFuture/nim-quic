@@ -6,7 +6,7 @@ import ../../../../helpers/openarray
 
 type
   certificateVerifierCB* =
-    proc(derCertificates: seq[seq[byte]]): bool {.gcsafe.}
+    proc(derCertificates: seq[seq[byte]]): bool {.gcsafe, noSideEffect.}
 
   customPTLSVerifyCertificateT = object of ptls_verify_certificate_t
     customCertVerifier: certificateVerifierCB
