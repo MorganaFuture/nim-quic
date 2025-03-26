@@ -46,7 +46,12 @@ proc destroy*(connection: Ngtcp2Connection) =
   ngtcp2_crypto_picotls_deconfigure_session(connection.cptls)
   connection.tlsConn.destroy()
   dealloc(connection.cptls.handshake_properties.additional_extensions)
-  if connection.cptls.handshake_properties.anon0.client.negotiated_protocols.count != 0:
+  let cnt =
+    connection.cptls.handshake_properties.anon0.client.negotiated_protocols.count
+  if cnt != 0:
+    let negotiated_protocols = cast[ptr UncheckedArray[ptls_iovec_t]](connection.cptls.handshake_properties.anon0.client.negotiated_protocols.list)
+    for i in 0 ..< cnt:
+      dealloc(negotiated_protocols[i].base)
     dealloc(
       connection.cptls.handshake_properties.anon0.client.negotiated_protocols.list
     )
@@ -193,7 +198,7 @@ proc handleTimeout(connection: Ngtcp2Connection) =
 
   errorAsDefect:
     let ret = ngtcp2_conn_handle_expiry(conn, now())
-    trace "handleExpiry", code=ret
+    trace "handleExpiry", code = ret
     if ret == NGTCP2_ERR_IDLE_CLOSE:
       connection.onTimeout()
     else:

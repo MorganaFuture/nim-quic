@@ -82,10 +82,11 @@ proc newNgtcp2Client*(
   ))
   let clientALPN = tlsContext.alpn.toSeq()
   for i in 0 ..< clientALPN.len:
-    var proto = clientALPN[i].cstring
+    var proto = clientALPN[i]
     alpn[i].len = csize_t(clientALPN[i].len)
-    alpn[i].base = cast[ptr uint8](newString(clientALPN[i].len).cstring)
-    copyMem(alpn[i].base.unsafeAddr, proto.unsafeAddr, clientALPN[i].len)
+    var base = alloc(clientALPN[i].len)
+    copyMem(base, proto[0].unsafeAddr, clientALPN[i].len)
+    alpn[i].base = cast[ptr uint8](base)
 
   cptls.handshake_properties = ptls_handshake_properties_t(
     anon0: ptls_handshake_properties_t_anon0_t(

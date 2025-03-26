@@ -1,5 +1,5 @@
 packageName = "quic"
-version = "0.2.1"
+version = "0.2.2"
 author = "Status Research & Development GmbH"
 description = "QUIC protocol implementation"
 license = "MIT"

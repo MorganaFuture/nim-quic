@@ -47,13 +47,11 @@ proc onClientHello(
   if params.negotiated_protocols.count == 0:
     return 0
   var alpn = initHashSet[string]()
+  let negotiated_protocols =
+    cast[ptr UncheckedArray[ptls_iovec_t]](params.negotiated_protocols.list)
   for i in 0 ..< int(params.negotiated_protocols.count):
-    var proto = newString(params.negotiated_protocols.list.len)
-    copyMem(
-      proto[0].addr,
-      params.negotiated_protocols.list.base,
-      params.negotiated_protocols.list.len,
-    )
+    var proto = newString(negotiated_protocols[i].len)
+    copyMem(proto[0].addr, negotiated_protocols[i].base, negotiated_protocols[i].len)
     alpn.incl(proto)
 
   let clientHello = cast[ptr ClientHello](self)
