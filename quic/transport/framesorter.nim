@@ -34,13 +34,10 @@ proc insert*(fs: var FrameSorter, offset: uint64, data: openArray[byte], isFin: 
 
   # Try to emit contiguous data
   var emitData: seq[byte]
-  while true:
-    if fs.buffer.hasKey(fs.readPos):
-      emitData.add fs.buffer[fs.readPos]
-      fs.buffer.del(fs.readPos)
-      inc fs.readPos
-    else:
-      break
+  while fs.buffer.hasKey(fs.readPos):
+    emitData.add fs.buffer[fs.readPos]
+    fs.buffer.del(fs.readPos)
+    inc fs.readPos
 
   if emitData.len > 0:
     fs.incoming.putNoWait(emitData)
