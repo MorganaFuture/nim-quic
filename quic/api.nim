@@ -8,6 +8,7 @@ import ./connection
 import ./udp/datagram
 import ./errors
 import ./transport/tlsbackend
+import ./transport/stream
 import ./helpers/rand
 
 export Listener
@@ -20,6 +21,7 @@ export remoteAddress
 export incomingStream
 export read
 export write
+export closeWrite
 export stop
 export drop
 export close

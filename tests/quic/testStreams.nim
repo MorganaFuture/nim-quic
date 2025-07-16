@@ -182,3 +182,63 @@ suite "streams":
     check incoming == message
 
     await simulation.cancelAndWait()
+
+  asyncTest "closeWrite() prevents further writes":
+    let simulation = simulateNetwork(client, server)
+    let message = @[1'u8, 2'u8, 3'u8]
+
+    let clientStream = await client.openStream()
+    await clientStream.write(message)
+    await clientStream.closeWrite()
+
+    # Writing after closeWrite should fail
+    expect QuicError:
+      await clientStream.write(@[4'u8, 5'u8, 6'u8])
+
+    await simulation.cancelAndWait()
+
+  asyncTest "closeWrite() sends FIN but allows server to write back":
+    let simulation = simulateNetwork(client, server)
+    let clientMessage = @[1'u8, 2'u8, 3'u8]
+    let serverMessage = @[4'u8, 5'u8, 6'u8]
+
+    # Client writes and closes write side
+    let clientStream = await client.openStream()
+    await clientStream.write(clientMessage)
+    await clientStream.closeWrite()
+
+    # Server reads client message
+    let serverStream = await server.incomingStream()
+    let incoming = await serverStream.read()
+    check incoming == clientMessage
+
+    # Server should still be able to write back
+    await serverStream.write(serverMessage)
+
+    # Client should be able to read server's response
+    let response = await clientStream.read()
+    check response == serverMessage
+
+    await simulation.cancelAndWait()
+
+  asyncTest "closeWrite() called on closed stream does nothing":
+    let simulation = simulateNetwork(client, server)
+
+    let clientStream = await client.openStream()
+    await clientStream.close()
+
+    # Calling closeWrite on already closed stream should not raise
+    await clientStream.closeWrite()
+    await simulation.cancelAndWait()
+
+  asyncTest "writing on a stream closed for writing raises error":
+    let simulation = simulateNetwork(client, server)
+
+    let clientStream = await client.openStream()
+    await clientStream.write(@[1'u8, 2'u8, 3'u8])
+    await clientStream.close()
+
+    expect QuicError:
+      await clientStream.write(@[4'u8, 5'u8, 6'u8])
+
+    await simulation.cancelAndWait()
