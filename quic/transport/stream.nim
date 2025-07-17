@@ -30,6 +30,9 @@ method write*(state: StreamState, bytes: seq[byte]) {.base, async.} =
 method close*(state: StreamState) {.base, async.} =
   doAssert false, "override this method"
 
+method closeWrite*(state: StreamState) {.base, async.} =
+  doAssert false, "override this method"
+
 method reset*(state: StreamState) {.base.} =
   doAssert false, "override this method"
 
@@ -70,6 +73,9 @@ proc write*(stream: Stream, bytes: seq[byte]) {.async.} =
 
 proc close*(stream: Stream) {.async.} =
   await stream.state.close()
+
+proc closeWrite*(stream: Stream) {.async.} =
+  await stream.state.closeWrite()
 
 proc reset*(stream: Stream) =
   stream.state.reset()

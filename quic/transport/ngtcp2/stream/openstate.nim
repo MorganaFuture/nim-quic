@@ -15,6 +15,7 @@ type OpenStream* = ref object of StreamState
   connection*: Ngtcp2Connection
   frameSorter*: FrameSorter
   closeFut*: Future[string]
+  writeFinSent*: bool
 
 proc newOpenStream*(connection: Ngtcp2Connection): OpenStream =
   let incomingQ = newAsyncQueue[seq[byte]]()
@@ -23,6 +24,7 @@ proc newOpenStream*(connection: Ngtcp2Connection): OpenStream =
     incoming: incomingQ,
     closeFut: newFuture[string](),
     frameSorter: initFrameSorter(incomingQ),
+    writeFinSent: false,
   )
 
 method enter*(state: OpenStream, stream: Stream) =
@@ -53,6 +55,10 @@ method read*(state: OpenStream): Future[seq[byte]] {.async.} =
     raise newException(StreamError, closeReason)
 
 method write*(state: OpenStream, bytes: seq[byte]): Future[void] =
+  if state.writeFinSent:
+    let fut = newFuture[void]()
+    fut.fail(newException(StreamError, "write side is closed"))
+    return fut
   # let stream = state.stream.valueOr:
   #   raise newException(QuicError, "stream is closed")
   # See https://github.com/status-im/nim-quic/pull/41 for more details
@@ -62,7 +68,16 @@ method close*(state: OpenStream) {.async.} =
   let stream = state.stream.valueOr:
     return
   discard state.connection.send(state.stream.get.id, @[], true)
+  state.writeFinSent = true
   stream.switch(newClosedStream(state.incoming, state.frameSorter))
+
+method closeWrite*(state: OpenStream) {.async.} =
+  ## Close write side by sending FIN, but keep read side open
+  let stream = state.stream.valueOr:
+    return
+  discard state.connection.send(state.stream.get.id, @[], true)
+  state.writeFinSent = true
+  # Note: we don't switch to ClosedStream here - read side stays open
 
 method reset*(state: OpenStream) =
   let stream = state.stream.valueOr:

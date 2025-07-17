@@ -39,6 +39,9 @@ method write*(state: ClosedStream, bytes: seq[byte]) {.async.} =
 method close*(state: ClosedStream) {.async.} =
   discard
 
+method closeWrite*(state: ClosedStream) {.async.} =
+  discard
+
 method onClose*(state: ClosedStream) =
   discard
 
