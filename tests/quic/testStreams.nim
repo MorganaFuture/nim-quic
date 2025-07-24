@@ -393,7 +393,7 @@ suite "streams":
   asyncTest "request-response pattern with half-close":
     let simulation = simulateNetwork(client, server)
     let request = cast[seq[byte]]("GET /\n")
-    let response =  cast[seq[byte]]("HTTP/1.1 200 OK\n")
+    let response = cast[seq[byte]]("HTTP/1.1 200 OK\n")
 
     # Client sends request and closes write side (signals end of request)
     let clientStream = await client.openStream()
