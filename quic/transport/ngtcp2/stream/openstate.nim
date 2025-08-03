@@ -16,6 +16,7 @@ type OpenStream* = ref object of StreamState
   frameSorter*: FrameSorter
   closeFut*: Future[string]
   writeFinSent*: bool
+  readClosed*: bool
 
 proc newOpenStream*(connection: Ngtcp2Connection): OpenStream =
   let incomingQ = newAsyncQueue[seq[byte]]()
@@ -25,6 +26,7 @@ proc newOpenStream*(connection: Ngtcp2Connection): OpenStream =
     closeFut: newFuture[string](),
     frameSorter: initFrameSorter(incomingQ),
     writeFinSent: false,
+    readClosed: false,
   )
 
 method enter*(state: OpenStream, stream: Stream) =
@@ -38,32 +40,53 @@ method leave*(state: OpenStream) =
   state.stream = Opt.none(Stream)
 
 method read*(state: OpenStream): Future[seq[byte]] {.async.} =
-  # Check if we have EOF and no more data in queue  
+  # RFC 9000 compliant stream reading logic
+  # Priority 1: Check for immediate EOF conditions
   if state.frameSorter.isEOF() and state.incoming.len == 0:
-    return @[] # Always return EOF when we hit end of stream
-
-  let incomingFut = state.incoming.get()
-  let raceFut = await race(state.closeFut, incomingFut)
-  if raceFut == incomingFut:
-    result = await incomingFut
-
-    # If we got empty data and isEOF, this means EOF
-    if result.len == 0 and state.frameSorter.isEOF():
-      return @[] # Return EOF (empty array)
-
-    # If we got real data, return it
-    if result.len > 0:
-      allowMoreIncomingBytes(state.stream, state.connection, result.len.uint64)
-  else:
-    incomingFut.cancelSoon()
-    let stream = state.stream.valueOr:
-      raise newException(StreamError, "stream is closed")
-
-    if state.frameSorter.isEOF():
+    # Remote sent FIN and no more data - check if we should switch to ClosedStream
+    if state.readClosed:
+      # Both remote FIN received and local read closed - switch to ClosedStream
+      let stream = state.stream.valueOr:
+        return @[] # Already closed
       stream.switch(newClosedStream(state.incoming, state.frameSorter))
+    return @[] # Return EOF immediately per RFC 9000 "Data Read" state
 
-    let closeReason = await state.closeFut
-    raise newException(StreamError, closeReason)
+  # Priority 2: Check if local read is closed but there's still buffered data
+  if state.readClosed and state.incoming.len == 0:
+    # Local read closed and no buffered data - switch to ClosedStream
+    let stream = state.stream.valueOr:
+      return @[] # Already closed
+    stream.switch(newClosedStream(state.incoming, state.frameSorter))
+    return @[] # Return EOF for locally closed read
+
+  # Priority 3: Get data from incoming queue
+  let data = await state.incoming.get()
+
+  # If we got real data, return it with flow control update
+  if data.len > 0:
+    allowMoreIncomingBytes(state.stream, state.connection, data.len.uint64)
+    return data
+
+  # If we got empty data (len == 0), check if this is EOF
+  if data.len == 0 and state.frameSorter.isEOF():
+    # This is EOF - stream has been closed with FIN bit from remote
+    let stream = state.stream.valueOr:
+      return @[] # Already closed
+    # If local read is also closed, switch to ClosedStream
+    if state.readClosed:
+      stream.switch(newClosedStream(state.incoming, state.frameSorter))
+    return @[] # Return EOF per RFC 9000
+
+  # If local read is closed but we got empty data (not EOF), return EOF
+  if state.readClosed:
+    let stream = state.stream.valueOr:
+      return @[] # Already closed
+    stream.switch(newClosedStream(state.incoming, state.frameSorter))
+    return @[] # Return EOF for locally closed read
+
+  # Empty data but no EOF - this shouldn't happen in normal operation
+  # Continue reading for more data
+  return await state.read()
 
 method write*(state: OpenStream, bytes: seq[byte]): Future[void] =
   if state.writeFinSent:
@@ -76,17 +99,25 @@ method write*(state: OpenStream, bytes: seq[byte]): Future[void] =
   state.connection.send(state.stream.get.id, bytes)
 
 method close*(state: OpenStream) {.async.} =
+  ## Close both write and read sides of the stream
   let stream = state.stream.valueOr:
     return
-  discard state.connection.send(state.stream.get.id, @[], true)
+
+  # Close write side by sending FIN
+  discard state.connection.send(state.stream.get.id, @[], true) # Send FIN
   state.writeFinSent = true
-  stream.switch(newClosedStream(state.incoming, state.frameSorter))
+
+  # Close read side locally
+  state.readClosed = true
+
+  # Don't switch to ClosedStream immediately - let read() handle the transition
+  # when all buffered data is consumed
 
 method closeWrite*(state: OpenStream) {.async.} =
   ## Close write side by sending FIN, but keep read side open
   let stream = state.stream.valueOr:
     return
-  discard state.connection.send(state.stream.get.id, @[], true) # Sending FIN
+  discard state.connection.send(state.stream.get.id, @[], true) # Send FIN
   state.writeFinSent = true
   # Note: we don't switch to ClosedStream here - read side stays open for half-close
 
@@ -103,6 +134,15 @@ method reset*(state: OpenStream) =
 method onClose*(state: OpenStream) =
   let stream = state.stream.valueOr:
     return
+
+  # Wake up pending read() operations before switching states
+  # This fixes race condition when ngtcp2 calls onClose() while read() is waiting
+  try:
+    state.incoming.putNoWait(@[]) # Send EOF marker to wake up pending reads
+  except AsyncQueueFullError:
+    # Queue is full, that's fine - there's already data to process
+    discard
+
   stream.switch(newClosedStream(state.incoming, state.frameSorter))
 
 method isClosed*(state: OpenStream): bool =
