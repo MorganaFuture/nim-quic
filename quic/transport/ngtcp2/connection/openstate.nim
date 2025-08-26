@@ -114,10 +114,9 @@ method receive(state: OpenConnection, datagram: Datagram) =
     errMsg = exc.msg
     trace "ngtcp2 error on receive", code = errCode, msg = errMsg
   finally:
-    var isDraining = state.ngtcp2Connection.isDraining
     let quicConnection = state.quicConnection.valueOr:
       return
-    if isDraining:
+    if state.ngtcp2Connection.isDraining:
       let ids = state.ids
       let duration = state.ngtcp2Connection.closingDuration()
       let draining = newDrainingConnection(ids, duration, state.derCertificates)
